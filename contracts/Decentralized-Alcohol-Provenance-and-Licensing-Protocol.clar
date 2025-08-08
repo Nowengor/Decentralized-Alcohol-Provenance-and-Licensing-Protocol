@@ -4,6 +4,8 @@
 (define-constant err-already-exists (err u102))
 (define-constant err-unauthorized (err u103))
 (define-constant err-invalid-age (err u104))
+(define-constant err-age-not-verified (err u105))
+(define-constant err-customer-not-found (err u106))
 
 (define-non-fungible-token alcohol-token uint)
 
@@ -40,7 +42,29 @@
     }
 )
 
+(define-map customer-age-verification
+    principal
+    {
+        birth-year: uint,
+        verification-date: uint,
+        is-verified: bool,
+        verifier: principal
+    }
+)
+
+(define-map sales-records
+    uint
+    {
+        token-id: uint,
+        customer: principal,
+        distributor: principal,
+        sale-date: uint,
+        age-verified: bool
+    }
+)
+
 (define-data-var token-id-nonce uint u0)
+(define-data-var sale-id-nonce uint u0)
 
 (define-public (register-producer 
     (license-id (string-ascii 32))
@@ -123,5 +147,65 @@
         (asserts! (is-eq tx-sender contract-owner) err-owner-only)
         (ok (map-set bottle-details token-id
             (merge bottle { is-verified: true })))
+    )
+)
+
+(define-public (verify-customer-age
+    (customer principal)
+    (birth-year uint))
+    (let
+        ((current-block burn-block-height)
+         (minimum-age u21)
+         (current-year u2024)
+         (calculated-age (- current-year birth-year)))
+        (asserts! (>= calculated-age minimum-age) err-invalid-age)
+        (ok (map-set customer-age-verification customer
+            {
+                birth-year: birth-year,
+                verification-date: current-block,
+                is-verified: true,
+                verifier: tx-sender
+            }
+        ))
+    )
+)
+
+(define-public (record-alcohol-sale
+    (token-id uint)
+    (customer principal))
+    (let
+        ((bottle (unwrap! (map-get? bottle-details token-id) err-not-found))
+         (customer-verification (unwrap! (map-get? customer-age-verification customer) err-customer-not-found))
+         (sale-id (var-get sale-id-nonce)))
+        (asserts! (is-eq (get current-owner bottle) tx-sender) err-unauthorized)
+        (asserts! (get is-verified customer-verification) err-age-not-verified)
+        (map-set sales-records sale-id
+            {
+                token-id: token-id,
+                customer: customer,
+                distributor: tx-sender,
+                sale-date: burn-block-height,
+                age-verified: true
+            }
+        )
+        (var-set sale-id-nonce (+ sale-id u1))
+        (ok sale-id)
+    )
+)
+
+(define-read-only (get-customer-verification (customer principal))
+    (ok (unwrap! (map-get? customer-age-verification customer) err-customer-not-found))
+)
+
+(define-read-only (get-sale-record (sale-id uint))
+    (ok (unwrap! (map-get? sales-records sale-id) err-not-found))
+)
+
+(define-read-only (check-customer-age-eligibility (customer principal))
+    (match (map-get? customer-age-verification customer)
+        verification (ok (and 
+            (get is-verified verification)
+            (>= (- u2024 (get birth-year verification)) u21)))
+        err-customer-not-found
     )
 )
