@@ -66,7 +66,7 @@
 (define-data-var token-id-nonce uint u0)
 (define-data-var sale-id-nonce uint u0)
 
-(define-public (register-producer 
+(define-public (register-producer
     (license-id (string-ascii 32))
     (jurisdictions (list 10 (string-ascii 32)))
     (expiry uint))
@@ -77,6 +77,23 @@
                 license-id: license-id,
                 expiry: expiry,
                 jurisdictions: jurisdictions,
+                status: true
+            }
+        ))
+    )
+)
+
+(define-public (register-distributor
+    (license-id (string-ascii 32))
+    (regions (list 10 (string-ascii 32)))
+    (expiry uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (ok (map-set distributor-licenses tx-sender
+            {
+                license-id: license-id,
+                regions: regions,
+                expiry: expiry,
                 status: true
             }
         ))
