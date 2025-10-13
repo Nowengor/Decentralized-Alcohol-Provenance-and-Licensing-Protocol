@@ -6,6 +6,7 @@
 (define-constant err-invalid-age (err u104))
 (define-constant err-age-not-verified (err u105))
 (define-constant err-customer-not-found (err u106))
+(define-constant err-batch-recalled (err u107))
 
 (define-non-fungible-token alcohol-token uint)
 
@@ -60,6 +61,15 @@
         distributor: principal,
         sale-date: uint,
         age-verified: bool
+    }
+)
+
+(define-map batch-recalls
+    (string-ascii 32)
+    {
+        recalled: bool,
+        recall-date: uint,
+        reason: (string-ascii 128)
     }
 )
 
@@ -126,12 +136,14 @@
     )
 )
 
-(define-public (transfer-bottle 
+(define-public (transfer-bottle
     (token-id uint)
     (recipient principal))
     (let
-        ((bottle (unwrap! (map-get? bottle-details token-id) err-not-found)))
+        ((bottle (unwrap! (map-get? bottle-details token-id) err-not-found))
+         (batch-recall (map-get? batch-recalls (get batch-id bottle))))
         (asserts! (is-eq (get current-owner bottle) tx-sender) err-unauthorized)
+        (asserts! (is-none batch-recall) err-batch-recalled)
         (try! (nft-transfer? alcohol-token token-id tx-sender recipient))
         (ok (map-set bottle-details token-id
             (merge bottle { current-owner: recipient })))
@@ -193,9 +205,11 @@
     (let
         ((bottle (unwrap! (map-get? bottle-details token-id) err-not-found))
          (customer-verification (unwrap! (map-get? customer-age-verification customer) err-customer-not-found))
+         (batch-recall (map-get? batch-recalls (get batch-id bottle)))
          (sale-id (var-get sale-id-nonce)))
         (asserts! (is-eq (get current-owner bottle) tx-sender) err-unauthorized)
         (asserts! (get is-verified customer-verification) err-age-not-verified)
+        (asserts! (is-none batch-recall) err-batch-recalled)
         (map-set sales-records sale-id
             {
                 token-id: token-id,
@@ -220,9 +234,30 @@
 
 (define-read-only (check-customer-age-eligibility (customer principal))
     (match (map-get? customer-age-verification customer)
-        verification (ok (and 
+        verification (ok (and
             (get is-verified verification)
             (>= (- u2024 (get birth-year verification)) u21)))
         err-customer-not-found
     )
+)
+
+(define-public (initiate-batch-recall
+    (batch-id (string-ascii 32))
+    (reason (string-ascii 128)))
+    (let
+        ((producer-license (unwrap! (map-get? producer-licenses tx-sender) err-unauthorized)))
+        (asserts! (get status producer-license) err-unauthorized)
+        (asserts! (< burn-block-height (get expiry producer-license)) err-unauthorized)
+        (ok (map-set batch-recalls batch-id
+            {
+                recalled: true,
+                recall-date: burn-block-height,
+                reason: reason
+            }
+        ))
+    )
+)
+
+(define-read-only (get-batch-recall-status (batch-id (string-ascii 32)))
+    (ok (unwrap! (map-get? batch-recalls batch-id) err-not-found))
 )
